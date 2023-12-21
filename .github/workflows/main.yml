@@ -1,0 +1,81 @@
+name: pipeline
+
+on:
+  push:
+    branches:
+      - master
+
+env:
+  projectId: ${{ vars.UC_PROJECT_ID }}
+  umbracoCloudApiKey: ${{ secrets.UC_API_KEY }}
+
+jobs:
+  preflight-checks:
+    name: Preflight checks
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      contents: write
+    steps:
+      - name: Checkout repo code
+        uses: actions/checkout@v3
+
+      - name: Check for remote changes since last deployment
+        id: check-remote-changes
+        run: $GITHUB_WORKSPACE/.github/workflows/scripts/get_changes_since_last_deployment.sh $projectId $umbracoCloudApiKey $GITHUB_WORKSPACE/git-patch
+        shell: bash
+
+      - name: Applying git patch to new branch
+        if: ${{ env.remoteChanges == 'yes' }}
+        run: |
+          git config user.name "Build pipeline"
+          git config user.email email@email.com
+          git switch -c auto/merge_remote_changes_for_${{github.run_number}}
+          git apply --reject --allow-empty -v $GITHUB_WORKSPACE/git-patch/${{ env.remoteChangeFile }}
+          git commit -m "Auto updated changes from remote for run ${{github.run_number}}" .
+          git remote add tmp-pusher ${{ github.server_url }}/${{ github.repository }}.git
+          git push --set-upstream tmp-pusher auto/merge_remote_changes_for_${{github.run_number}}
+        shell: bash
+
+      - name: Merge remote changes manually
+        if: ${{ env.remoteChanges == 'yes' }}
+        uses: trstringer/manual-approval@v1
+        timeout-minutes: 30
+        with:
+          secret: ${{ github.TOKEN }}
+          approvers: ${{ github.triggering_actor }}
+          minimum-approvals: 1
+          issue-title: Changes for run ${{github.run_number}}
+          issue-body: Please approve or deny the changes for run ${{github.run_number}}
+          exclude-workflow-initiator-as-approver: false
+          additional-approved-words: ''
+          additional-denied-words: ''
+
+  publish:
+    needs: preflight-checks
+    name: Zip and Publish to Cloud
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo code
+        uses: actions/checkout@v3
+
+      - name: Create Deployment Meta
+        id: deployment-meta
+        run: $GITHUB_WORKSPACE/.github/workflows/scripts/create_deployment.sh $projectId $umbracoCloudApiKey "Run number ${{github.run_number}}"
+        shell: bash
+
+      - name: Zip Source Code
+        run: zip -r sources.zip . -x ".git/*" ".github/*" "src/UmbracoCommerceDemo/bin/*" "src/UmbracoCommerceDemo/obj/*" "node_modules/*"
+        shell: bash
+
+      - name: Post Zipped Artifact
+        run: $GITHUB_WORKSPACE/.github/workflows/scripts/upload_package.sh $projectId ${{ steps.deployment-meta.outputs.DEPLOYMENT_ID }} $umbracoCloudApiKey $GITHUB_WORKSPACE/sources.zip
+        shell: bash
+
+      - name: Request Start Deployment
+        run: $GITHUB_WORKSPACE/.github/workflows/scripts/start_deployment.sh $projectId ${{ steps.deployment-meta.outputs.DEPLOYMENT_ID }} $umbracoCloudApiKey
+        shell: bash
+
+      - name: Wait for deployment completed
+        run: $GITHUB_WORKSPACE/.github/workflows/scripts/get_deployment_status.sh $projectId ${{ steps.deployment-meta.outputs.DEPLOYMENT_ID }} $umbracoCloudApiKey
+        shell: bash
