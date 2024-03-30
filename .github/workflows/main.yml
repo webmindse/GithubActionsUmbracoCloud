@@ -32,7 +32,8 @@ jobs:
           git config user.email email@email.com
           git switch -c auto/merge_remote_changes_for_${{github.run_number}}
           git apply --reject --allow-empty -v $GITHUB_WORKSPACE/git-patch/${{ env.remoteChangeFile }}
-          git commit -am "Auto updated changes from remote for run ${{github.run_number}}" .
+          git add .
+          git commit -m "Auto updated changes from remote for run ${{github.run_number}}" .
           git remote add tmp-pusher ${{ github.server_url }}/${{ github.repository }}.git
           git push --set-upstream tmp-pusher auto/merge_remote_changes_for_${{github.run_number}}
         shell: bash
