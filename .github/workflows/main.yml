@@ -4,7 +4,8 @@ on:
   push:
     branches:
       - master
-
+concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}
 env:
   projectId: ${{ vars.UC_PROJECT_ID }}
   umbracoCloudApiKey: ${{ secrets.UC_API_KEY }}
